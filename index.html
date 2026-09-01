@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NOAA 太阳直射点与全球 3D 数字孪生台 (自定义定位版)</title>
+  
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.114/Build/Cesium/Cesium.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body, #cesiumContainer {
+      width: 100%; height: 100%; overflow: hidden; background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", monospace;
+      color: #e2e8f0;
+    }
+    .cesium-viewer-bottomContainer, .cesium-viewer-animationContainer, .cesium-viewer-timelineContainer {
+      display: none !important;
+    }
+
+    .glass-panel {
+      position: absolute;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      background: rgba(9, 14, 26, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      padding: 14px 16px;
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
+      z-index: 10;
+    }
+
+    /* 移动端/小屏幕自适应与折叠按钮 */
+    .panel-toggle-btn {
+      display: none;
+      position: absolute;
+      z-index: 20;
+      background: rgba(9, 14, 26, 0.9);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      color: #38bdf8;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 11px;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+    }
+    #toggle-telemetry { top: 12px; left: 12px; }
+    #toggle-fly { top: 12px; right: 12px; }
+
+    /* 左侧遥测面板 */
+    #telemetry-panel {
+      top: 18px; left: 18px; width: 350px;
+      max-height: calc(100vh - 220px);
+      overflow-y: auto;
+      scrollbar-width: thin;
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+    .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      padding-bottom: 8px; margin-bottom: 10px;
+    }
+    .panel-title {
+      font-size: 13px; font-weight: 700; color: #ffd04b;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .status-badge {
+      font-size: 10px; padding: 2px 6px; border-radius: 4px;
+      background: rgba(56, 189, 248, 0.15); border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #38bdf8; font-weight: 600;
+    }
+    .data-row {
+      display: flex; justify-content: space-between; font-size: 11.5px;
+      margin-bottom: 5px; color: #94a3b8;
+    }
+    .data-val { font-weight: 600; color: #f8fafc; text-align: right; }
+    .sub-section {
+      margin-top: 10px; padding-top: 8px;
+      border-top: 1px dashed rgba(255,255,255,0.1);
+    }
+    .section-title {
+      font-size: 11.5px; font-weight: 700; margin-bottom: 6px;
+      display: flex; align-items: center; gap: 4px;
+    }
+
+    /* 右上角快捷飞行与自定义坐标面板 */
+    #quick-fly-panel {
+      top: 18px; right: 18px; width: 270px;
+      max-height: calc(100vh - 220px);
+      overflow-y: auto;
+      scrollbar-width: thin;
+      transition: transform 0.3s ease, opacity 0.3s ease;
+    }
+    .fly-btn {
+      display: block; width: 100%; text-align: left;
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+      color: #cbd5e1; padding: 6px 10px; border-radius: 5px;
+      font-size: 11px; margin-bottom: 5px; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .fly-btn:hover { background: #38bdf8; color: #02040a; font-weight: 600; }
+
+    /* 自定义坐标定位控件样式 */
+    .custom-coord-box {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.15);
+    }
+    .coord-inputs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    .coord-field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .coord-field label {
+      font-size: 10px;
+      color: #94a3b8;
+    }
+    .coord-field input {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #f8fafc;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      outline: none;
+      width: 100%;
+    }
+    .coord-field input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 5px rgba(56, 189, 248, 0.4);
+    }
+    .btn-locate {
+      width: 100%;
+      background: rgba(56, 189, 248, 0.2);
+      border: 1px solid rgba(56, 189, 248, 0.5);
+      color: #38bdf8;
+      font-weight: 600;
+      padding: 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      transition: all 0.2s;
+    }
+    .btn-locate:hover {
+      background: #38bdf8;
+      color: #0b1120;
+    }
+
+    /* 右下角雷达 */
+    #radar-panel {
+      bottom: 180px; right: 18px; width: 170px; height: 170px;
+      border-radius: 50%; padding: 0; overflow: hidden;
+      border: 2px solid rgba(56, 189, 248, 0.4);
+    }
+    #radar-canvas { width: 100%; height: 100%; display: block; }
+    .radar-label {
+      position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+      font-size: 9px; font-weight: 700; color: #38bdf8;
+      background: rgba(8, 14, 28, 0.8); padding: 1px 6px; border-radius: 6px;
+      pointer-events: none;
+    }
+
+    /* 底部时间控制 */
+    #bottom-control {
+      bottom: 18px; left: 50%; transform: translateX(-50%);
+      width: calc(100% - 36px); max-width: 1080px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .slider-container {
+      display: flex; align-items: center; gap: 10px; font-size: 11.5px;
+    }
+    .slider-container label { width: 85px; color: #94a3b8; flex-shrink: 0; }
+    input[type=range] {
+      flex: 1; height: 4px; -webkit-appearance: none;
+      background: rgba(255,255,255,0.15); border-radius: 2px; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+      background: #ffd04b; box-shadow: 0 0 8px rgba(255, 208, 75, 0.8); cursor: pointer;
+    }
+    .btn-row { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+    .btn {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+      color: #cbd5e1; padding: 4px 8px; border-radius: 4px; font-size: 11px;
+      cursor: pointer; display: inline-flex; align-items: center; gap: 4px; transition: all 0.2s;
+    }
+    .btn:hover, .btn.active {
+      background: #ffd04b; color: #0b1120; font-weight: 600; border-color: #ffd04b;
+    }
+    .term-btn {
+      font-size: 10px; padding: 2px 5px;
+      background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.2); color: #38bdf8;
+    }
+    .term-btn:hover { background: #38bdf8; color: #02040a; border-color: #38bdf8; }
+
+    #solar-terms-bar {
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      padding-bottom: 2px;
+      scrollbar-width: thin;
+    }
+
+    /* 移动端媒体查询 */
+    @media (max-width: 768px) {
+      .panel-toggle-btn { display: block; }
+      #telemetry-panel {
+        top: 48px; left: 12px; width: calc(100vw - 24px); max-width: 340px;
+        max-height: 50vh;
+      }
+      #quick-fly-panel {
+        top: 48px; right: 12px; width: calc(100vw - 24px); max-width: 300px;
+        max-height: 50vh;
+      }
+      .panel-collapsed {
+        display: none !important;
+      }
+      #radar-panel {
+        bottom: 210px; right: 12px; width: 120px; height: 120px;
+      }
+      #bottom-control {
+        bottom: 10px; width: calc(100% - 20px); padding: 10px 12px;
+      }
+      .slider-container label { width: 70px; font-size: 10.5px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 移动端浮动切换按钮 -->
+  <button id="toggle-telemetry" class="panel-toggle-btn" onclick="togglePanel('telemetry-panel')">📊 遥测面板</button>
+  <button id="toggle-fly" class="panel-toggle-btn" onclick="togglePanel('quick-fly-panel')">🎯 定位/视角</button>
+
+  <div id="cesiumContainer"></div>
+
+  <div class="glass-panel" id="telemetry-panel">
+    <div class="panel-header">
+      <div class="panel-title">🌐 NOAA 太阳天体与物理遥测台</div>
+      <span class="status-badge" id="status-tag">实时同步</span>
+    </div>
+    
+    <div class="data-row"><span>UTC 协调世界时</span><span class="data-val" id="val-utc">--</span></div>
+    <div class="data-row"><span>太阳真黄经 (Ecliptic Lon)</span><span class="data-val" id="val-eclip-lon">--</span></div>
+    <div class="data-row"><span>太阳直射赤纬 (δ)</span><span class="data-val" id="val-decl" style="color:#ffd04b;">--</span></div>
+    <div class="data-row"><span>太阳直射经度 (真正午)</span><span class="data-val" id="val-lon" style="color:#ffd04b;">--</span></div>
+    <div class="data-row"><span>均时差 (Equation of Time)</span><span class="data-val" id="val-eot">--</span></div>
+    <div class="data-row"><span>大气顶层太阳总辐照度</span><span class="data-val" id="val-flux">--</span></div>
+
+    <div class="sub-section">
+      <div class="section-title" style="color:#00f2fe;">📍 测站微观遥测与光伏算力</div>
+      <div class="data-row"><span>测站名称 / 坐标</span><span class="data-val" id="val-obs-pos">--</span></div>
+      <div class="data-row"><span>测站真太阳时 (LAT)</span><span class="data-val" id="val-obs-lat">--</span></div>
+      <div class="data-row"><span>折射修正高度角</span><span class="data-val" id="val-obs-alt" style="color:#38bdf8;">--</span></div>
+      <div class="data-row"><span>地平天顶方位角</span><span class="data-val" id="val-obs-az">--</span></div>
+      <div class="data-row"><span>法向日照辐射 (DNI)</span><span class="data-val" id="val-obs-dni">--</span></div>
+      <div class="data-row"><span>光伏板理论瞬时功率</span><span class="data-val" id="val-obs-pv" style="color:#ffd04b;">--</span></div>
+      <div class="data-row"><span>昼夜/暮光状态</span><span class="data-val" id="val-obs-status">--</span></div>
+    </div>
+  </div>
+
+  <div class="glass-panel" id="quick-fly-panel">
+    <div class="panel-header">
+      <div class="panel-title" style="color:#cbd5e1;">视角跃迁与自定义定位</div>
+    </div>
+    <button class="fly-btn" onclick="flyToSpot(121.4998, 31.2397, 850, -22, 135)">🏢 上海·陆家嘴 (超高层建筑群)</button>
+    <button class="fly-btn" onclick="flyToSpot(121.4998, 31.2397, 25, 10, 150)">🚶 陆家嘴·地面人视视角 (仰视天际线)</button>
+    <button class="fly-btn" onclick="flyToSpot(116.3913, 39.9163, 650, -25, 0)">🏛️ 北京·故宫中轴线</button>
+    <button class="fly-btn" onclick="flyToSpot(-74.0060, 40.7128, 900, -20, 45)">🗽 纽约·曼哈顿摩天森林</button>
+    <button class="fly-btn" onclick="flyToSpot(86.9250, 27.9881, 14000, -20, 20)">🏔️ 喜马拉雅·珠峰 (立体地形)</button>
+    <button class="fly-btn" onclick="flyToSpot(116.4, 39.9, 16000000, -90, 0)">🛰️ 切换至外太空全球全景</button>
+
+    <div class="custom-coord-box">
+      <div style="font-size: 11px; font-weight: 700; color: #38bdf8; margin-bottom: 6px;">🎯 自定义经纬度定位</div>
+      <div class="coord-inputs">
+        <div class="coord-field">
+          <label>经度 Longitude (°)</label>
+          <input type="number" id="input-custom-lon" step="0.0001" min="-180" max="180" value="121.4998" placeholder="-180 ~ 180">
+        </div>
+        <div class="coord-field">
+          <label>纬度 Latitude (°)</label>
+          <input type="number" id="input-custom-lat" step="0.0001" min="-90" max="90" value="31.2397" placeholder="-90 ~ 90">
+        </div>
+      </div>
+      <div class="coord-field" style="margin-bottom: 6px;">
+        <label>视高/距离 Height (米)</label>
+        <input type="number" id="input-custom-alt" step="100" min="10" max="25000000" value="1500" placeholder="10 ~ 25000000">
+      </div>
+      <button class="btn-locate" onclick="applyCustomLocation()">🚀 跃迁至该坐标定位</button>
+    </div>
+
+    <div style="margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top:6px; display: flex; flex-direction: column; gap: 4px;">
+      <button class="fly-btn" id="btn-toggle-shadow" onclick="toggleShadows()">🌓 建筑物理阴影 (当前: 关)</button>
+      <button class="fly-btn" style="background: rgba(56, 189, 248, 0.1); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);" onclick="configureCesiumToken()">🔑 配置 Cesium Ion Token</button>
+    </div>
+  </div>
+
+  <div class="glass-panel" id="radar-panel">
+    <div class="radar-label">测站地平全息雷达</div>
+    <canvas id="radar-canvas"></canvas>
+  </div>
+
+  <div class="glass-panel" id="bottom-control">
+    <div class="slider-container">
+      <label>年积日 (DOY)</label>
+      <input type="range" id="slider-day" min="0" max="365.9" step="0.1" value="0">
+      <span class="data-val" id="disp-day" style="width: 80px;">第 1.0 天</span>
+    </div>
+    <div class="slider-container">
+      <label>日内 UTC 秒数</label>
+      <input type="range" id="slider-sec" min="0" max="86400" step="60" value="43200">
+      <span class="data-val" id="disp-time" style="width: 80px;">12:00:00</span>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn active" id="btn-live">实时同步</button>
+      <button class="btn" id="btn-speed-day">快速自转 (1000x)</button>
+      <button class="btn" id="btn-speed-year">公转四季 (50000x)</button>
+      <div style="flex:1;"></div>
+      <button class="btn" onclick="setSeason('vernal')">春分</button>
+      <button class="btn" onclick="setSeason('summer')">夏至</button>
+      <button class="btn" onclick="setSeason('autumn')">秋分</button>
+      <button class="btn" onclick="setSeason('winter')">冬至</button>
+    </div>
+
+    <div class="btn-row" id="solar-terms-bar"></div>
+  </div>
+
+  <script>
+    // 0. Token 初始化（优先使用 URL 参数或 localStorage 中的自定义 Token）
+    const DEFAULT_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6IkdBSlJLdDVBWmZWa295bDEiLCJqdGkiOiJmYjQyYmI2NS1lMzhkLTQ1OWYtODY0Yi1lM2VkNjFmNWJhYWUiLCJpZCI6NDc3ODQxLCJzdWIiOiJmIGQgc2EgZCBzIGEiLCJpc3MiOiJodHRwczovL2FwaS5jZXNpdW0uY29tIiwiYXVkIjoiZiBkIHNhIGQgcyBhX2RlZmF1bHQiLCJpYXQiOjE3ODgyNTcwMjJ9.buyFpZM4SjQuCKBc44xYbj-dI8HTQKvgE7-_l2vhEGE';
+    const urlParams = new URLSearchParams(window.location.search);
+    const storedToken = localStorage.getItem('cesium_ion_token');
+    const activeToken = urlParams.get('token') || storedToken || DEFAULT_TOKEN;
+
+    Cesium.Ion.defaultAccessToken = activeToken;
+
+    function configureCesiumToken() {
+      const current = localStorage.getItem('cesium_ion_token') || '';
+      const input = prompt('请输入你的 Cesium Ion Access Token（留空恢复默认Token）：', current);
+      if (input !== null) {
+        const trimmed = input.trim();
+        if (trimmed) {
+          localStorage.setItem('cesium_ion_token', trimmed);
+          alert('Token 已保存，页面即将刷新生效！');
+        } else {
+          localStorage.removeItem('cesium_ion_token');
+          alert('已恢复为默认 Token，页面即将刷新！');
+        }
+        window.location.reload();
+      }
+    }
+
+    function togglePanel(panelId) {
+      const el = document.getElementById(panelId);
+      if (el) el.classList.toggle('panel-collapsed');
+    }
+
+    // 1. 初始化 Viewer (流畅度调优配置)
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      shadows: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      timeline: false,
+      animation: false,
+      requestRenderMode: false,
+      maximumRenderTimeChange: Infinity
+    });
+
+    viewer.resolutionScale = 1.0;
+    viewer.scene.globe.maximumScreenSpaceError = 2.5;
+    viewer.scene.globe.tileCacheSize = 300;
+    viewer.scene.globe.enableLighting = true;
+    viewer.scene.globe.showGroundAtmosphere = true;
+    viewer.scene.highDynamicRange = true;
+
+    // 地形
+    Cesium.createWorldTerrainAsync({
+      requestWaterMask: true
+    }).then(terrainProvider => {
+      viewer.terrainProvider = terrainProvider;
+    }).catch(e => console.warn("地形加载提示:", e));
+
+    // OSM 建筑
+    let osmBuildingsTileset = null;
+    Cesium.createOsmBuildingsAsync().then(buildingTileset => {
+      osmBuildingsTileset = buildingTileset;
+      viewer.scene.primitives.add(buildingTileset);
+      buildingTileset.maximumScreenSpaceError = 32;
+      buildingTileset.cullRequestsWhileMoving = true;
+      buildingTileset.maximumMemoryUsage = 512;
+
+      buildingTileset.style = new Cesium.Cesium3DTileStyle({
+        color: {
+          conditions: [
+            ['${feature["cesium#estimatedHeight"]} >= 300', 'color("#e0f2fe")'],
+            ['${feature["cesium#estimatedHeight"]} >= 150', 'color("#cbd5e1")'],
+            ['${feature["cesium#estimatedHeight"]} >= 50', 'color("#94a3b8")'],
+            ['true', 'color("#64748b")']
+          ]
+        }
+      });
+    }).catch(err => console.warn("OSM 建筑加载:", err));
+
+    // 阴影开关
+    let shadowEnabled = false;
+    function toggleShadows() {
+      shadowEnabled = !shadowEnabled;
+      viewer.shadows = shadowEnabled;
+      document.getElementById('btn-toggle-shadow').textContent = `🌓 建筑物理阴影 (当前: ${shadowEnabled ? '开' : '关'})`;
+    }
+
+    // 初始测站
+    let currentObs = { lon: 121.4998, lat: 31.2397, name: "上海·陆家嘴" };
+    viewer.camera.setView({
+      destination: Cesium.Cartesian3.fromDegrees(121.4998, 31.2397, 1200),
+      orientation: {
+        heading: Cesium.Math.toRadians(135),
+        pitch: Cesium.Math.toRadians(-22),
+        roll: 0.0
+      }
+    });
+
+    // 标靶与光束实体
+    const obsPointEntity = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(currentObs.lon, currentObs.lat, 0),
+      point: { pixelSize: 8, color: Cesium.Color.fromCssColorString('#00f2fe'), outlineColor: Cesium.Color.WHITE, outlineWidth: 2 }
+    });
+
+    viewer.entities.add({
+      polyline: {
+        positions: new Cesium.CallbackProperty(() => {
+          return [
+            Cesium.Cartesian3.fromDegrees(currentObs.lon, currentObs.lat, 0),
+            Cesium.Cartesian3.fromDegrees(currentObs.lon, currentObs.lat, 80000)
+          ];
+        }, false),
+        width: 2,
+        material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.2, color: Cesium.Color.fromCssColorString('#00f2fe') })
+      }
+    });
+
+    const subsolarEntity = viewer.entities.add({
+      point: { pixelSize: 12, color: Cesium.Color.RED, outlineColor: Cesium.Color.YELLOW, outlineWidth: 2 }
+    });
+    viewer.entities.add({
+      polyline: {
+        positions: new Cesium.CallbackProperty(() => {
+          if (!window.currentSubsolar) return [];
+          return [
+            Cesium.Cartesian3.fromDegrees(window.currentSubsolar.lon, window.currentSubsolar.lat, 0),
+            Cesium.Cartesian3.fromDegrees(window.currentSubsolar.lon, window.currentSubsolar.lat, 5000000)
+          ];
+        }, false),
+        width: 4,
+        material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.3, color: Cesium.Color.YELLOW })
+      }
+    });
+
+    // 天文算法
+    const Astronomy = {
+      getJulianDate(date) { return (date.getTime() / 86400000) + 2440587.5; },
+      calcSolarPhysics(date) {
+        const JD = this.getJulianDate(date);
+        const T = (JD - 2451545.0) / 36525.0;
+
+        let L0 = (280.46646 + T * (36000.76983 + T * 0.0003032)) % 360;
+        let M = (357.52911 + T * (35999.05029 - 0.0001537 * T)) % 360;
+        const Mrad = M * Math.PI / 180;
+        const e = 0.016708634 - T * (0.000042037 + 0.0000001267 * T);
+
+        const C = Math.sin(Mrad) * (1.914602 - T * (0.004817 + 0.000014 * T))
+                + Math.sin(2 * Mrad) * (0.019993 - 0.000101 * T)
+                + Math.sin(3 * Mrad) * 0.000289;
+
+        const trueLong = L0 + C;
+        const omega = 125.04 - 1934.136 * T;
+        const lambda = (trueLong - 0.00569 - 0.00478 * Math.sin(omega * Math.PI / 180));
+        const lambdaRad = lambda * Math.PI / 180;
+
+        const vRad = (M + C) * Math.PI / 180;
+        const distAU = (1.000001018 * (1 - e * e)) / (1 + e * Math.cos(vRad));
+        const solarFlux = 1361.0 / (distAU * distAU);
+
+        const seconds = 21.448 - T * (46.8150 + T * (0.00059 - T * 0.001813));
+        let obq = 23 + (26 + (seconds / 60)) / 60 + 0.00256 * Math.cos(omega * Math.PI / 180);
+        const obqRad = obq * Math.PI / 180;
+
+        const sinDecl = Math.sin(obqRad) * Math.sin(lambdaRad);
+        const declination = Math.asin(sinDecl) * 180 / Math.PI;
+
+        const y = Math.tan(obqRad / 2) * Math.tan(obqRad / 2);
+        const L0rad = L0 * Math.PI / 180;
+        const eot = 4 * (180 / Math.PI) * (
+          y * Math.sin(2 * L0rad) - 2 * e * Math.sin(Mrad) +
+          4 * e * y * Math.sin(Mrad) * Math.cos(2 * L0rad) -
+          0.5 * y * y * Math.sin(4 * L0rad) - 1.25 * e * e * Math.sin(2 * Mrad)
+        );
+
+        const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+        let subsolarLon = -((utcHours + eot / 60 - 12) * 15);
+        subsolarLon = ((subsolarLon + 180) % 360 + 360) % 360 - 180;
+
+        return { jd: JD, eclipticLon: (lambda % 360 + 360) % 360, declination: declination, longitude: subsolarLon, equationOfTime: eot, solarFlux: solarFlux };
+      },
+
+      calcObserverHorizontal(obsLat, obsLon, subLat, subLon, solarFlux) {
+        const phi = obsLat * Math.PI / 180;
+        const delta = subLat * Math.PI / 180;
+        const H = (obsLon - subLon) * Math.PI / 180;
+
+        const sinAlt = Math.sin(phi) * Math.sin(delta) + Math.cos(phi) * Math.cos(delta) * Math.cos(H);
+        const geoAlt = Math.asin(Math.max(-1, Math.min(1, sinAlt))) * 180 / Math.PI;
+
+        let refrDeg = 0;
+        if (geoAlt > -5.0) {
+          refrDeg = (1.0 / Math.tan((geoAlt + 7.31 / (geoAlt + 4.4)) * Math.PI / 180)) / 60.0;
+        }
+        const refractedAlt = geoAlt + (geoAlt > -0.833 ? refrDeg : 0);
+
+        const cosAz = (Math.sin(delta) - Math.sin(phi) * sinAlt) / (Math.cos(phi) * Math.cos(geoAlt * Math.PI / 180));
+        let azimuth = Math.acos(Math.max(-1, Math.min(1, cosAz))) * 180 / Math.PI;
+        if (Math.sin(H) > 0) azimuth = 360 - azimuth;
+
+        let dni = 0;
+        if (refractedAlt > 0) {
+          const am = 1.0 / Math.sin(Math.max(0.05, refractedAlt * Math.PI / 180));
+          dni = solarFlux * Math.pow(0.7, Math.pow(am, 0.678));
+        }
+        const pvPower = dni * Math.sin(Math.max(0, refractedAlt * Math.PI / 180)) * 0.20;
+
+        return { geoAltitude: geoAlt, refractedAltitude: refractedAlt, azimuth: azimuth, dni: dni, pvPower: pvPower };
+      }
+    };
+
+    // 雷达图绘制
+    const radarCanvas = document.getElementById('radar-canvas');
+    const rCtx = radarCanvas.getContext('2d');
+
+    function drawRadar(azimuthDeg, altDeg) {
+      const size = radarCanvas.width = radarCanvas.height = 180;
+      const center = size / 2;
+      const maxR = center - 14;
+
+      rCtx.clearRect(0, 0, size, size);
+
+      const grad = rCtx.createRadialGradient(center, center, 5, center, center, maxR);
+      grad.addColorStop(0, altDeg > 0 ? '#0a2540' : '#050a14');
+      grad.addColorStop(1, '#02060d');
+      rCtx.fillStyle = grad;
+      rCtx.beginPath();
+      rCtx.arc(center, center, maxR, 0, Math.PI * 2);
+      rCtx.fill();
+      rCtx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+      rCtx.lineWidth = 1.5;
+      rCtx.stroke();
+
+      [30, 60].forEach(alt => {
+        const r = maxR * (1 - alt / 90);
+        rCtx.beginPath();
+        rCtx.arc(center, center, r, 0, Math.PI * 2);
+        rCtx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+        rCtx.stroke();
+      });
+
+      rCtx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+      rCtx.beginPath();
+      rCtx.moveTo(center, center - maxR); rCtx.lineTo(center, center + maxR);
+      rCtx.moveTo(center - maxR, center); rCtx.lineTo(center + maxR, center);
+      rCtx.stroke();
+
+      rCtx.fillStyle = '#38bdf8';
+      rCtx.font = 'bold 9px monospace';
+      rCtx.textAlign = 'center';
+      rCtx.fillText('N 0°', center, center - maxR + 9);
+      rCtx.fillText('S', center, center + maxR - 4);
+      rCtx.fillText('E', center + maxR - 8, center + 3);
+      rCtx.fillText('W', center - maxR + 8, center + 3);
+
+      if (altDeg > -12) {
+        const r = maxR * (1 - Math.max(0, altDeg) / 90);
+        const theta = (azimuthDeg - 90) * Math.PI / 180;
+        const sunX = center + r * Math.cos(theta);
+        const sunY = center + r * Math.sin(theta);
+
+        rCtx.beginPath();
+        rCtx.arc(sunX, sunY, altDeg > 0 ? 5 : 4, 0, Math.PI * 2);
+        rCtx.fillStyle = altDeg > 0 ? '#ffd04b' : '#fb923c';
+        rCtx.shadowColor = altDeg > 0 ? '#ffd04b' : '#fb923c';
+        rCtx.shadowBlur = 10;
+        rCtx.fill();
+        rCtx.shadowBlur = 0;
+      }
+    }
+
+    // 地图点击拾取
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(function (movement) {
+      const cartesian = viewer.camera.pickEllipsoid(movement.position, viewer.scene.globe.ellipsoid);
+      if (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const lon = Cesium.Math.toDegrees(cartographic.longitude);
+        const lat = Cesium.Math.toDegrees(cartographic.latitude);
+
+        currentObs = { lon: lon, lat: lat, name: `自选点 [${lat.toFixed(2)}°, ${lon.toFixed(2)}°]` };
+        obsPointEntity.position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+
+        // 同步填入右上角输入框
+        document.getElementById('input-custom-lon').value = lon.toFixed(4);
+        document.getElementById('input-custom-lat').value = lat.toFixed(4);
+
+        triggerPhysicsUpdate(true);
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    // 预设点快速飞行
+    function flyToSpot(lon, lat, height, pitchDeg, headingDeg) {
+      currentObs = { lon, lat, name: `测站 [${lat.toFixed(2)}°, ${lon.toFixed(2)}°]` };
+      obsPointEntity.position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+      
+      // 同步输入框
+      document.getElementById('input-custom-lon').value = lon.toFixed(4);
+      document.getElementById('input-custom-lat').value = lat.toFixed(4);
+      document.getElementById('input-custom-alt').value = height;
+
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
+        orientation: {
+          heading: Cesium.Math.toRadians(headingDeg || 0),
+          pitch: Cesium.Math.toRadians(pitchDeg),
+          roll: 0.0
+        },
+        duration: 2.0
+      });
+      triggerPhysicsUpdate(true);
+    }
+
+    // ==========================================
+    // 自定义经纬度定位逻辑
+    // ==========================================
+    function applyCustomLocation() {
+      const lonVal = parseFloat(document.getElementById('input-custom-lon').value);
+      const latVal = parseFloat(document.getElementById('input-custom-lat').value);
+      const altVal = parseFloat(document.getElementById('input-custom-alt').value) || 1500;
+
+      if (isNaN(lonVal) || lonVal < -180 || lonVal > 180) {
+        alert('请输入有效的经度值 (-180° 到 180°)');
+        return;
+      }
+      if (isNaN(latVal) || latVal < -90 || latVal > 90) {
+        alert('请输入有效的纬度值 (-90° 到 90°)');
+        return;
+      }
+
+      currentObs = {
+        lon: lonVal,
+        lat: latVal,
+        name: `自定义测站 [${latVal.toFixed(4)}°, ${lonVal.toFixed(4)}°]`
+      };
+
+      // 更新测站三维标记球位置
+      obsPointEntity.position = Cesium.Cartesian3.fromDegrees(lonVal, latVal, 0);
+
+      // 调整相机角度：距离地表较近时自动倾斜抬头，高空时俯视
+      let pitchDeg = -30;
+      if (altVal > 50000) pitchDeg = -90;
+      else if (altVal < 300) pitchDeg = -10;
+
+      viewer.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(lonVal, latVal, altVal),
+        orientation: {
+          heading: Cesium.Math.toRadians(0),
+          pitch: Cesium.Math.toRadians(pitchDeg),
+          roll: 0.0
+        },
+        duration: 2.0
+      });
+
+      triggerPhysicsUpdate(true);
+    }
+
+    // 在输入框中按回车键直接执行定位
+    ['input-custom-lon', 'input-custom-lat', 'input-custom-alt'].forEach(id => {
+      document.getElementById(id).addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') applyCustomLocation();
+      });
+    });
+
+    // ==========================================
+    // 物理刷新与节流
+    // ==========================================
+    let isLive = true;
+    let simSpeed = 0;
+    let targetDate = new Date();
+    let lastRenderedTime = 0;
+
+    function triggerPhysicsUpdate(force = false) {
+      const nowMs = targetDate.getTime();
+      if (!force && Math.abs(nowMs - lastRenderedTime) < 200) return;
+      lastRenderedTime = nowMs;
+
+      const solar = Astronomy.calcSolarPhysics(targetDate);
+      window.currentSubsolar = { lat: solar.declination, lon: solar.longitude };
+      subsolarEntity.position = Cesium.Cartesian3.fromDegrees(solar.longitude, solar.declination, 0);
+
+      viewer.clock.currentTime = Cesium.JulianDate.fromDate(targetDate);
+
+      const obsPhys = Astronomy.calcObserverHorizontal(currentObs.lat, currentObs.lon, solar.declination, solar.longitude, solar.solarFlux);
+      drawRadar(obsPhys.azimuth, obsPhys.refractedAltitude);
+
+      document.getElementById('val-utc').textContent = targetDate.toISOString().replace('T', ' ').slice(0, 19);
+      document.getElementById('val-eclip-lon').textContent = `${solar.eclipticLon.toFixed(2)}°`;
+      document.getElementById('val-decl').textContent = `${solar.declination >= 0 ? '+' : ''}${solar.declination.toFixed(4)}°`;
+      document.getElementById('val-lon').textContent = `${solar.longitude >= 0 ? '+' : ''}${solar.longitude.toFixed(4)}°`;
+      document.getElementById('val-eot').textContent = `${solar.equationOfTime.toFixed(2)} 分钟`;
+      document.getElementById('val-flux').textContent = `${solar.solarFlux.toFixed(1)} W/m²`;
+
+      document.getElementById('val-obs-pos').textContent = currentObs.name;
+      const latTimeSec = (targetDate.getUTCHours()*3600 + targetDate.getUTCMinutes()*60 + targetDate.getUTCSeconds() + solar.equationOfTime*60 + currentObs.lon*240 + 86400) % 86400;
+      const lh = Math.floor(latTimeSec / 3600);
+      const lm = Math.floor((latTimeSec % 3600) / 60);
+      const ls = Math.floor(latTimeSec % 60);
+      document.getElementById('val-obs-lat').textContent = `${String(lh).padStart(2,'0')}:${String(lm).padStart(2,'0')}:${String(ls).padStart(2,'0')}`;
+
+      document.getElementById('val-obs-alt').textContent = `${obsPhys.refractedAltitude.toFixed(2)}°`;
+      document.getElementById('val-obs-az').textContent = `${obsPhys.azimuth.toFixed(2)}°`;
+      document.getElementById('val-obs-dni').textContent = `${obsPhys.dni.toFixed(1)} W/m²`;
+      document.getElementById('val-obs-pv').textContent = `${obsPhys.pvPower.toFixed(1)} W/m²`;
+
+      const statusEl = document.getElementById('val-obs-status');
+      if (obsPhys.refractedAltitude > 0) {
+        statusEl.textContent = "☀️ 昼半球 (日照覆盖)"; statusEl.style.color = "#ffd04b";
+      } else if (obsPhys.refractedAltitude > -6) {
+        statusEl.textContent = "🌅 民用暮光 (Civil)"; statusEl.style.color = "#fb923c";
+      } else if (obsPhys.refractedAltitude > -18) {
+        statusEl.textContent = "🌌 天文暮光 (Astro)"; statusEl.style.color = "#818cf8";
+      } else {
+        statusEl.textContent = "🌙 极夜/黑夜覆盖"; statusEl.style.color = "#38bdf8";
+      }
+    }
+
+    // 底部控制与 24 节气
+    const sliderDay = document.getElementById('slider-day');
+    const sliderSec = document.getElementById('slider-sec');
+    const dispDay = document.getElementById('disp-day');
+    const dispTime = document.getElementById('disp-time');
+    const btnLive = document.getElementById('btn-live');
+    const btnSpeedDay = document.getElementById('btn-speed-day');
+    const btnSpeedYear = document.getElementById('btn-speed-year');
+
+    const SOLAR_TERMS = [
+      { name: "春分", lon: 0 }, { name: "清明", lon: 15 }, { name: "谷雨", lon: 30 },
+      { name: "立夏", lon: 45 }, { name: "小满", lon: 60 }, { name: "芒种", lon: 75 },
+      { name: "夏至", lon: 90 }, { name: "小暑", lon: 105 }, { name: "大暑", lon: 120 },
+      { name: "立秋", lon: 135 }, { name: "处暑", lon: 150 }, { name: "白露", lon: 165 },
+      { name: "秋分", lon: 180 }, { name: "寒露", lon: 195 }, { name: "霜降", lon: 210 },
+      { name: "立冬", lon: 225 }, { name: "小雪", lon: 240 }, { name: "大雪", lon: 255 },
+      { name: "冬至", lon: 270 }, { name: "小寒", lon: 285 }, { name: "大寒", lon: 300 },
+      { name: "立春", lon: 315 }, { name: "雨水", lon: 330 }, { name: "惊蛰", lon: 345 }
+    ];
+
+    const termsBar = document.getElementById('solar-terms-bar');
+    SOLAR_TERMS.forEach(term => {
+      const b = document.createElement('button');
+      b.className = 'btn term-btn';
+      b.textContent = term.name;
+      b.onclick = () => {
+        isLive = false; simSpeed = 0;
+        const dayOffset = (term.lon / 360) * 365.25;
+        let d = 79.5 + dayOffset;
+        if (d > 365) d -= 365;
+        const year = targetDate.getUTCFullYear();
+        targetDate = new Date(Date.UTC(year, 0, 1, 12, 0, 0).getTime() + d * 86400000);
+        updateSlidersFromDate(targetDate);
+        triggerPhysicsUpdate(true);
+      };
+      termsBar.appendChild(b);
+    });
+
+    btnLive.onclick = () => {
+      isLive = true; simSpeed = 0;
+      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      btnLive.classList.add('active');
+    };
+    btnSpeedDay.onclick = () => {
+      isLive = false; simSpeed = 1000;
+      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      btnSpeedDay.classList.add('active');
+    };
+    btnSpeedYear.onclick = () => {
+      isLive = false; simSpeed = 50000;
+      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      btnSpeedYear.classList.add('active');
+    };
+
+    function setSeason(s) {
+      isLive = false; simSpeed = 0;
+      const year = targetDate.getUTCFullYear();
+      if (s === 'vernal') targetDate = new Date(Date.UTC(year, 2, 20, 12, 0, 0));
+      if (s === 'summer') targetDate = new Date(Date.UTC(year, 5, 21, 12, 0, 0));
+      if (s === 'autumn') targetDate = new Date(Date.UTC(year, 8, 23, 12, 0, 0));
+      if (s === 'winter') targetDate = new Date(Date.UTC(year, 11, 22, 12, 0, 0));
+      updateSlidersFromDate(targetDate);
+      triggerPhysicsUpdate(true);
+    }
+
+    function updateSlidersFromDate(date) {
+      const start = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+      const doy = (date - start) / 86400000;
+      sliderDay.value = doy;
+      dispDay.textContent = `第 ${doy.toFixed(1)} 天`;
+      const sec = date.getUTCHours() * 3600 + date.getUTCMinutes() * 60 + date.getUTCSeconds();
+      sliderSec.value = sec;
+      dispTime.textContent = date.toISOString().slice(11, 19);
+    }
+
+    sliderDay.oninput = () => {
+      isLive = false; simSpeed = 0;
+      const start = new Date(Date.UTC(targetDate.getUTCFullYear(), 0, 1));
+      targetDate = new Date(start.getTime() + parseFloat(sliderDay.value) * 86400000 + parseFloat(sliderSec.value) * 1000);
+      updateSlidersFromDate(targetDate);
+      triggerPhysicsUpdate(true);
+    };
+
+    sliderSec.oninput = () => {
+      isLive = false; simSpeed = 0;
+      const start = new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate()));
+      targetDate = new Date(start.getTime() + parseFloat(sliderSec.value) * 1000);
+      updateSlidersFromDate(targetDate);
+      triggerPhysicsUpdate(true);
+    };
+
+    let lastTime = performance.now();
+    function renderLoop(time) {
+      const delta = (time - lastTime) / 1000;
+      lastTime = time;
+
+      if (isLive) {
+        targetDate = new Date();
+        updateSlidersFromDate(targetDate);
+        triggerPhysicsUpdate(false);
+      } else if (simSpeed > 0) {
+        targetDate = new Date(targetDate.getTime() + delta * simSpeed * 1000);
+        updateSlidersFromDate(targetDate);
+        triggerPhysicsUpdate(false);
+      }
+      requestAnimationFrame(renderLoop);
+    }
+
+    updateSlidersFromDate(targetDate);
+    triggerPhysicsUpdate(true);
+    requestAnimationFrame(renderLoop);
+  </script>
+</body>
+</html>
