@@ -375,12 +375,13 @@
       timeline: false,
       animation: false,
       requestRenderMode: false,
-      maximumRenderTimeChange: Infinity
+      maximumRenderTimeChange: 1 / 30
     });
 
-    viewer.resolutionScale = 1.0;
-    viewer.scene.globe.maximumScreenSpaceError = 2.5;
-    viewer.scene.globe.tileCacheSize = 300;
+    // 高 DPR 屏（Retina）自动降低渲染分辨率比例，减轻 GPU 负担，画面清晰度损失极小
+    viewer.resolutionScale = window.devicePixelRatio > 1.5 ? 0.75 : 1.0;
+    viewer.scene.globe.maximumScreenSpaceError = 3.5;
+    viewer.scene.globe.tileCacheSize = 150;
     viewer.scene.globe.enableLighting = true;
     viewer.scene.globe.showGroundAtmosphere = true;
     viewer.scene.highDynamicRange = true;
@@ -397,7 +398,7 @@
     Cesium.createOsmBuildingsAsync().then(buildingTileset => {
       osmBuildingsTileset = buildingTileset;
       viewer.scene.primitives.add(buildingTileset);
-      buildingTileset.maximumScreenSpaceError = 32;
+      buildingTileset.maximumScreenSpaceError = 16;
       buildingTileset.cullRequestsWhileMoving = true;
       buildingTileset.maximumMemoryUsage = 512;
 
@@ -529,7 +530,7 @@
         }
         const refractedAlt = geoAlt + (geoAlt > -0.833 ? refrDeg : 0);
 
-        const cosAz = (Math.sin(delta) - Math.sin(phi) * sinAlt) / (Math.cos(phi) * Math.cos(geoAlt * Math.PI / 180));
+        const cosAz = (Math.sin(delta) - Math.sin(phi) * Math.sin(geoAlt * Math.PI / 180)) / (Math.cos(phi) * Math.cos(geoAlt * Math.PI / 180));
         let azimuth = Math.acos(Math.max(-1, Math.min(1, cosAz))) * 180 / Math.PI;
         if (Math.sin(H) > 0) azimuth = 360 - azimuth;
 
@@ -759,6 +760,10 @@
     const btnSpeedDay = document.getElementById('btn-speed-day');
     const btnSpeedYear = document.getElementById('btn-speed-year');
 
+    function resetSpeedButtons() {
+      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+    }
+
     const SOLAR_TERMS = [
       { name: "春分", lon: 0 }, { name: "清明", lon: 15 }, { name: "谷雨", lon: 30 },
       { name: "立夏", lon: 45 }, { name: "小满", lon: 60 }, { name: "芒种", lon: 75 },
@@ -771,17 +776,28 @@
     ];
 
     const termsBar = document.getElementById('solar-terms-bar');
+
+    // 通过二分法反解太阳真黄经，求目标节气（太阳黄经 = term.lon）对应的精确时刻
+    function findSolarTermDate(year, targetLon) {
+      const jan1 = Date.UTC(year, 0, 1);
+      let lo = 0, hi = 366;
+      for (let i = 0; i < 40; i++) {
+        const mid = (lo + hi) / 2;
+        const lon = Astronomy.calcSolarPhysics(new Date(jan1 + mid * 86400000)).eclipticLon;
+        const diff = ((lon - targetLon + 540) % 360) - 180;
+        if (diff < 0) lo = mid; else hi = mid;
+      }
+      return new Date(jan1 + ((lo + hi) / 2) * 86400000);
+    }
+
     SOLAR_TERMS.forEach(term => {
       const b = document.createElement('button');
       b.className = 'btn term-btn';
       b.textContent = term.name;
       b.onclick = () => {
         isLive = false; simSpeed = 0;
-        const dayOffset = (term.lon / 360) * 365.25;
-        let d = 79.5 + dayOffset;
-        if (d > 365) d -= 365;
-        const year = targetDate.getUTCFullYear();
-        targetDate = new Date(Date.UTC(year, 0, 1, 12, 0, 0).getTime() + d * 86400000);
+        resetSpeedButtons();
+        targetDate = findSolarTermDate(targetDate.getUTCFullYear(), term.lon);
         updateSlidersFromDate(targetDate);
         triggerPhysicsUpdate(true);
       };
@@ -790,27 +806,26 @@
 
     btnLive.onclick = () => {
       isLive = true; simSpeed = 0;
-      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      resetSpeedButtons();
       btnLive.classList.add('active');
     };
     btnSpeedDay.onclick = () => {
       isLive = false; simSpeed = 1000;
-      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      resetSpeedButtons();
       btnSpeedDay.classList.add('active');
     };
     btnSpeedYear.onclick = () => {
       isLive = false; simSpeed = 50000;
-      [btnLive, btnSpeedDay, btnSpeedYear].forEach(b => b.classList.remove('active'));
+      resetSpeedButtons();
       btnSpeedYear.classList.add('active');
     };
 
     function setSeason(s) {
       isLive = false; simSpeed = 0;
+      resetSpeedButtons();
       const year = targetDate.getUTCFullYear();
-      if (s === 'vernal') targetDate = new Date(Date.UTC(year, 2, 20, 12, 0, 0));
-      if (s === 'summer') targetDate = new Date(Date.UTC(year, 5, 21, 12, 0, 0));
-      if (s === 'autumn') targetDate = new Date(Date.UTC(year, 8, 23, 12, 0, 0));
-      if (s === 'winter') targetDate = new Date(Date.UTC(year, 11, 22, 12, 0, 0));
+      const lon = { vernal: 0, summer: 90, autumn: 180, winter: 270 }[s];
+      targetDate = findSolarTermDate(year, lon);
       updateSlidersFromDate(targetDate);
       triggerPhysicsUpdate(true);
     }
@@ -827,6 +842,7 @@
 
     sliderDay.oninput = () => {
       isLive = false; simSpeed = 0;
+      resetSpeedButtons();
       const start = new Date(Date.UTC(targetDate.getUTCFullYear(), 0, 1));
       targetDate = new Date(start.getTime() + parseFloat(sliderDay.value) * 86400000 + parseFloat(sliderSec.value) * 1000);
       updateSlidersFromDate(targetDate);
@@ -835,6 +851,7 @@
 
     sliderSec.oninput = () => {
       isLive = false; simSpeed = 0;
+      resetSpeedButtons();
       const start = new Date(Date.UTC(targetDate.getUTCFullYear(), targetDate.getUTCMonth(), targetDate.getUTCDate()));
       targetDate = new Date(start.getTime() + parseFloat(sliderSec.value) * 1000);
       updateSlidersFromDate(targetDate);
